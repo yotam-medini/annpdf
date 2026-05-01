@@ -140,6 +140,7 @@ class AnnPdf {
   void LoadPdf();
   void LoadFonts();
   void LoadAnnotations();
+  void Annotate();
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   int rc_{0};
   bool Ok() const { return rc_ == 0; }
@@ -178,6 +179,8 @@ int AnnPdf::Run() {
   }
   if (Ok()) { LoadPdf(); }
   if (Ok()) { LoadFonts(); }
+  if (Ok()) { LoadAnnotations(); }
+  if (Ok()) { Annotate(); }
   return rc_;
 }
 
@@ -232,6 +235,12 @@ void AnnPdf::LoadFonts() {
       }
     }
   }
+}
+
+void AnnPdf::LoadAnnotations() {
+}
+
+void AnnPdf::Annotate() {
 }
 
 namespace {
