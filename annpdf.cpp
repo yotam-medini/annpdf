@@ -6,8 +6,10 @@
 #include <fstream>
 #include <iostream>
 #include <string>
-// #include <unordered_map>
+#include <unordered_map>
 #include <vector>
+#include <sysexits.h>
+
 
 // Boost
 #include <boost/program_options.hpp>
@@ -86,18 +88,21 @@ class AnnotationBlank : public Annotation {
 
 class Font {
  public:
-  ~Font() {
+   ~Font() {
+    if (c_face_) {
+      cairo_font_face_destroy(c_face_);
+    }
     if (hb_font_) {
       hb_font_destroy(hb_font_);
     }
-    if (ft_face_newed_) {
+    if (ft_face_) {
       FT_Done_Face(ft_face_);
     }
   }
-  FT_Face ft_face_;
-  bool ft_face_newed_{false};
+  FT_Face ft_face_{nullptr};
   hb_font_t *hb_font_{nullptr};
-  int size{-1};
+  cairo_font_face_t *c_face_{nullptr};
+  int size_{12}; // default
 };
 
 class AnnPdf {
@@ -120,6 +125,7 @@ class AnnPdf {
  private:
   void LoadPdf();
   void LoadFonts();
+  void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   int rc_{0};
   bool Ok() const { return rc_ == 0; }
   const std::string &input_pdf_path_;
@@ -130,10 +136,11 @@ class AnnPdf {
   PopplerDocument *doc_{nullptr};
   FT_Library ft_library_;
   bool ft_library_initded_{false};
-  // std::unordered_map<std::string, Font;
+  std::unordered_map<std::string, Font> name2font_;
 };
 
 AnnPdf::~AnnPdf() {
+  name2font_.clear(); // before freeing ft_library_  
   if (ft_library_initded_) {
     FT_Done_FreeType(ft_library_);
   }
@@ -164,7 +171,7 @@ void AnnPdf::LoadPdf() {
   if (ec) {
     std::cerr << std::format("file_size({}) failed reason={}\n",
       input_pdf_path_, ec.message());
-    rc_ = ec.value();
+    SetRc(ec.value());
   } else if (debug_flags_ & 0x2) {
     std::cout << std::format("size({})={}\n", input_pdf_path_, sz);
   }
@@ -181,12 +188,40 @@ void AnnPdf::LoadPdf() {
 void AnnPdf::LoadFonts() {
   FT_Init_FreeType(&ft_library_);
   ft_library_initded_ = true;
+  for (auto const &s_font_path : font_paths_) {
+    fs::path font_path{s_font_path};
+    std::string font_name = font_path.filename();
+    if (font_name.ends_with(".ttf") || font_name.ends_with(".otf")) {
+      font_name.erase(font_name.end() - 4, font_name.end());
+    }
+    if (debug_flags_ & 0x2) {
+      std::cout << std::format("s_font_path={}, font_name={}\n",
+        s_font_path, font_name);
+      if (name2font_.find(font_name) != name2font_.end()) {
+        std::cerr << std::format("Duplicate font name: {}\n", font_name);
+        SetRc(1);
+      } else {
+        auto iter = name2font_.insert({font_name, Font()}).first;
+        Font &font = iter->second;
+        FT_Face &ft_face = font.ft_face_;
+        if (FT_New_Face(ft_library_, s_font_path.c_str(), 0, &ft_face)) {
+          std::cerr << std::format("Failed to load font {}\n", s_font_path);
+          SetRc(EX_NOINPUT);
+        }
+        if (Ok()) {
+          FT_Set_Char_Size(ft_face, 0, font.size_ * 64, 72, 72);
+          font.hb_font_ = hb_ft_font_create(ft_face, nullptr);
+          font.c_face_ = cairo_ft_font_face_create_for_ft_face(ft_face, 0);
+        }
+      }
+    }
+  }
   ////////////// hb_ft_font_changed(hb_font) !!!!!!!!!!!!!!!!!!!!!
 }
 
 namespace {
 
-bool GetOptions(po::variables_map &vm, int argc, char **argv) {
+bool GetOptions(po::variables_map &vm, int &rc, int argc, char **argv) {
   bool got = false;
   po::options_description desc("annpdf - Annotate PDF");
   desc.add_options()
@@ -212,6 +247,7 @@ bool GetOptions(po::variables_map &vm, int argc, char **argv) {
       got = true;
     } catch (const po::error& e) {
       std::cerr << std::format("Error: {}\n", e.what()) << desc;
+      rc = 1;
     }
   }
   return got;
@@ -222,7 +258,7 @@ bool GetOptions(po::variables_map &vm, int argc, char **argv) {
 int main(int argc, char **argv) {
   int rc = 0;
   po::variables_map vm;
-  if (GetOptions(vm, argc, argv)) {
+  if (GetOptions(vm, rc, argc, argv)) {
     AnnPdf ann_pdf(
       vm["inpdf"].as<std::string>(),
       vm["outpdf"].as<std::string>(),
