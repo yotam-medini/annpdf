@@ -5,6 +5,7 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -34,12 +35,16 @@ namespace po = boost::program_options;
 
 class Annotation {
  public:
+  Annotation(int page=0) : page_{page} {}
+  virtual ~Annotation() {}
   virtual std::string str() const = 0;
+  int page_;
 };
 
 class AnnotationText : public Annotation {
  public:
   AnnotationText(
+    int page,
     const std::string &lang,
     bool is_ltr,
     std::string text,
@@ -47,6 +52,7 @@ class AnnotationText : public Annotation {
     int y,
     const std::string &font_name,
     int font_size) :
+    Annotation(page),
     lang_{lang},
     is_ltr_{is_ltr},
     text_{text},
@@ -61,8 +67,8 @@ class AnnotationText : public Annotation {
   std::string font_name_;
   int font_size_;
   std::string str() const override {
-    return std::format("{}{}{} {} @ ({}, {}) F={}:{} {}",
-      "{", lang_, is_ltr_ ? '>' : '<', text_, xy_[0], xy_[1],
+    return std::format("{}p={} {}{} {} @ ({}, {}) F={}:{} {}",
+      "{", page_, lang_, is_ltr_ ? '>' : '<', text_, xy_[0], xy_[1],
       font_name_, font_size_,
       "}");
   }
@@ -72,14 +78,15 @@ class AnnotationText : public Annotation {
 
 class AnnotationBlank : public Annotation {
  public:
-  AnnotationBlank(int xl, int y, int xr, int h) :
+  AnnotationBlank(int page, int xl, int y, int xr, int h) :
+    Annotation(page),
     xy_{xl, y},
     width_{xr - xl},
     height_{h} {
   }
   std::string str() const override {
-    return std::format("{}blank: xy=({}, {}) wh=({}, {}){}", "{", xy_[0],
-                       xy_[1], width_, height_, "}");
+    return std::format("{}blank: p={}, xy=({}, {}) wh=({}, {}){}",
+      "{", page_, xy_[0], xy_[1], width_, height_, "}");
   }
   std::array<int, 2> xy_;
   int width_{0};
@@ -88,7 +95,7 @@ class AnnotationBlank : public Annotation {
 
 class Font {
  public:
-   ~Font() {
+  ~Font() {
     if (c_face_) {
       cairo_font_face_destroy(c_face_);
     }
@@ -97,6 +104,13 @@ class Font {
     }
     if (ft_face_) {
       FT_Done_Face(ft_face_);
+    }
+  }
+  void Resize(int size) {
+    if (size_ != size) {
+      FT_Set_Char_Size(ft_face_, 0, size * 64, 72, 72);
+      hb_ft_font_changed(hb_font_);
+      size_ = size;
     }
   }
   FT_Face ft_face_{nullptr};
@@ -125,6 +139,7 @@ class AnnPdf {
  private:
   void LoadPdf();
   void LoadFonts();
+  void LoadAnnotations();
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   int rc_{0};
   bool Ok() const { return rc_ == 0; }
@@ -133,6 +148,7 @@ class AnnPdf {
   const std::string &annotation_path_;
   const vstrings_t &font_paths_;
   const uint32_t debug_flags_{0};
+  std::vector<std::unique_ptr<Annotation>> annotations_;
   PopplerDocument *doc_{nullptr};
   FT_Library ft_library_;
   bool ft_library_initded_{false};
@@ -216,7 +232,6 @@ void AnnPdf::LoadFonts() {
       }
     }
   }
-  ////////////// hb_ft_font_changed(hb_font) !!!!!!!!!!!!!!!!!!!!!
 }
 
 namespace {
