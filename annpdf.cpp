@@ -1,13 +1,16 @@
 #include <cstdint>
 
 #include <array>
+#include <charconv>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <sysexits.h>
 
@@ -142,6 +145,7 @@ class AnnPdf {
   void LoadAnnotations();
   void Annotate();
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
+  bool iget(int &v, const std::string &line, size_t &i);
   int rc_{0};
   bool Ok() const { return rc_ == 0; }
   const std::string &input_pdf_path_;
@@ -238,9 +242,80 @@ void AnnPdf::LoadFonts() {
 }
 
 void AnnPdf::LoadAnnotations() {
+  std::ifstream f{annotation_path_};
+  if (f.fail()) {
+    std::cerr << std::format("Failed to open annotation file {}\n",
+      annotation_path_);
+    SetRc(EX_NOINPUT);
+  } else {
+    int line_number = 0;
+    int page = -1;
+    int x = -1;
+    int y = -1;
+    int width = -1;
+    int height = -1;
+    std::string font_name;
+    std::string lang = "en";
+    bool ltr = true;
+    for (std::string line; Ok() && std::getline(f, line); ++line_number) {
+      if (debug_flags_ & 0x4) {
+        std::cout << std::format("[{:3d}] {}\n", line_number, line);
+      }
+      char c0 = line.empty() ? ' ' :  ' ';
+      if ((c0 != ' ') && (c0 != '#')) {
+        constexpr std::string_view blank{"blank"};
+        if (line.starts_with(blank)) {
+          size_t i = blank.size();
+          bool unused =
+            (i < line.size()) && (line[i] == ':')
+            && (iget(page, line, i)
+            && iget(x, line, i)
+            && iget(y, line, i)
+            && iget(width, line, i)
+            && iget(height, line, i));
+          (void)unused;
+          if (std::unordered_set<int>{page, x, y, width, height}.contains(-1)) {
+            std::cerr <<
+              std::format("page={}, x={}, y={}, width={}, height={}\n",
+                page, x, y, width, height) <<
+              std::format("Missing values in [{:3d}] {}\n", line_number, line);
+            SetRc(EX_CONFIG);
+          } else {
+            annotations_.push_back(
+              std::make_unique<AnnotationBlank>(page, x, y, width, height));
+          }
+        } else {
+          SetRc(13);
+        }
+      }
+    }
+  }
 }
 
 void AnnPdf::Annotate() {
+}
+
+bool AnnPdf::iget(int &v, const std::string &line, size_t &i) {
+  bool got = false;
+  size_t j = i;
+  while ((j < line.size()) && (line[j] != ':')) {
+    ++j;
+  }
+  if (i < j) {
+    int new_val;
+    auto data = line.data();
+    auto [ptr, ec] = std::from_chars(data + i, data + j, new_val);
+    if ((ec == std::errc()) && (ptr == data + j)) {
+      v = new_val;
+      got = true;
+    } else {
+      std::cerr << std::format("iget failed {}{}{}\n",
+        '"', line.substr(i, j - i), '"');
+      SetRc(EX_CONFIG);
+    }
+    i = j;
+  }
+  return got;
 }
 
 namespace {
