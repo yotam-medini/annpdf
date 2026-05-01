@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
-project(PdfHebrewStamper VERSION 1.0)
+project(annpdf VERSION 1.0)
+
+# For LSP
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
