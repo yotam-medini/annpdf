@@ -150,6 +150,10 @@ class AnnPdf {
   void Annotate();
   void AnnotatePage(
     PopplerPage* page, cairo_t* cr, const size_t ai_begin, const size_t ai_end);
+  void HarfBuzzShaping(
+    hb_buffer_t* hb_buffer,
+    const AnnotationText &at,
+    const Font &font);
   void ApplyFont(cairo_t *cr, const Font &font);
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   bool Ok() const { return rc_ == 0; }
@@ -423,12 +427,7 @@ void AnnPdf::AnnotatePage(
 
       // HarfBuzz Shaping
       hb_buffer_t* hb_buffer = hb_buffer_create();
-      hb_buffer_add_utf8(hb_buffer, at->text_.c_str(), -1, 0, -1);
-      hb_direction_t hb_dir = at->is_ltr_ ? HB_DIRECTION_LTR : HB_DIRECTION_RTL;
-      hb_buffer_set_direction(hb_buffer, hb_dir);
-      hb_buffer_set_script(hb_buffer, (hb_dir == HB_DIRECTION_RTL) ? HB_SCRIPT_HEBREW : HB_SCRIPT_LATIN);
-      hb_buffer_set_language(hb_buffer, hb_language_from_string(at->lang_.c_str(), -1));
-      hb_shape(font.hb_font_, hb_buffer, NULL, 0);
+      HarfBuzzShaping(hb_buffer, *at, font);
 
       unsigned int glyph_count;
       hb_glyph_info_t* info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
@@ -453,6 +452,20 @@ void AnnPdf::AnnotatePage(
     }
   }
   cairo_restore(cr);
+}
+
+void AnnPdf::HarfBuzzShaping(
+    hb_buffer_t* hb_buffer,
+    const AnnotationText &at,
+    const Font &font) {
+  hb_buffer_add_utf8(hb_buffer, at.text_.c_str(), -1, 0, -1);
+  hb_direction_t hb_dir = at.is_ltr_ ? HB_DIRECTION_LTR : HB_DIRECTION_RTL;
+  hb_buffer_set_direction(hb_buffer, hb_dir);
+  hb_buffer_set_script(hb_buffer,
+    (hb_dir == HB_DIRECTION_RTL) ? HB_SCRIPT_HEBREW : HB_SCRIPT_LATIN);
+  auto hb_lang = hb_language_from_string(at.lang_.c_str(), -1);
+  hb_buffer_set_language(hb_buffer, hb_lang);
+  hb_shape(font.hb_font_, hb_buffer, nullptr, 0);
 }
 
 void AnnPdf::ApplyFont(cairo_t *cr, const Font &font) {
