@@ -155,6 +155,10 @@ class AnnPdf {
     const AnnotationText &at,
     const Font &font);
   void ApplyFont(cairo_t *cr, const Font &font);
+  void ShowGlyphs(
+    cairo_t *cr,
+    hb_buffer_t* hb_buffer,
+    const AnnotationText &at);
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   bool Ok() const { return rc_ == 0; }
 
@@ -425,29 +429,10 @@ void AnnPdf::AnnotatePage(
       Font &font = iter->second;
       font.Resize(at->font_size_);
 
-      // HarfBuzz Shaping
       hb_buffer_t* hb_buffer = hb_buffer_create();
       HarfBuzzShaping(hb_buffer, *at, font);
-
-      unsigned int glyph_count;
-      hb_glyph_info_t* info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
-      hb_glyph_position_t* pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
-
       ApplyFont(cr, font);
-
-      double cx = at->xy_[0];
-      double cy = at->xy_[1];
-      std::vector<cairo_glyph_t> cairo_glyphs(glyph_count);
-
-      for (unsigned int g = 0; g < glyph_count; ++g) {
-          cairo_glyphs[g].index = info[g].codepoint;
-          cairo_glyphs[g].x = cx + (pos[g].x_offset / 64.0);
-          cairo_glyphs[g].y = cy - (pos[g].y_offset / 64.0);
-          cx += pos[g].x_advance / 64.0;
-          cy += pos[g].y_advance / 64.0;
-      }
-
-      cairo_show_glyphs(cr, cairo_glyphs.data(), glyph_count);
+      ShowGlyphs(cr, hb_buffer, *at);
       hb_buffer_destroy(hb_buffer);
     }
   }
@@ -474,6 +459,30 @@ void AnnPdf::ApplyFont(cairo_t *cr, const Font &font) {
   cairo_matrix_init(&font_matrix, font.size_, 0, 0, -font.size_, 0, 0);
   cairo_set_font_matrix(cr, &font_matrix);
   cairo_set_source_rgb(cr, 0, 0, 0);
+}
+
+void AnnPdf::ShowGlyphs(
+    cairo_t *cr,
+    hb_buffer_t* hb_buffer,
+    const AnnotationText &at) {
+  unsigned int glyph_count;
+  hb_glyph_info_t* info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
+  hb_glyph_position_t* pos =
+    hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
+
+  double cx = at.xy_[0];
+  double cy = at.xy_[1];
+  std::vector<cairo_glyph_t> cairo_glyphs(glyph_count);
+
+  for (unsigned int g = 0; g < glyph_count; ++g) {
+      cairo_glyphs[g].index = info[g].codepoint;
+      cairo_glyphs[g].x = cx + (pos[g].x_offset / 64.0);
+      cairo_glyphs[g].y = cy - (pos[g].y_offset / 64.0);
+      cx += pos[g].x_advance / 64.0;
+      cy += pos[g].y_advance / 64.0;
+  }
+
+  cairo_show_glyphs(cr, cairo_glyphs.data(), glyph_count);
 }
 
 namespace {
