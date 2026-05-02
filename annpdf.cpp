@@ -150,8 +150,10 @@ class AnnPdf {
   void Annotate();
   void AnnotatePage(
     PopplerPage* page, cairo_t* cr, const size_t ai_begin, const size_t ai_end);
+  void ApplyFont(cairo_t *cr, const Font &font);
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   bool Ok() const { return rc_ == 0; }
+
   int rc_{0};
   const std::string &input_pdf_path_;
   const std::string &output_pdf_path_;
@@ -432,12 +434,7 @@ void AnnPdf::AnnotatePage(
       hb_glyph_info_t* info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
       hb_glyph_position_t* pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
 
-      // Apply Font
-      cairo_set_font_face(cr, font.c_face_);
-      cairo_matrix_t font_matrix;
-      cairo_matrix_init(&font_matrix, font.size_, 0, 0, -font.size_, 0, 0);
-      cairo_set_font_matrix(cr, &font_matrix);
-      cairo_set_source_rgb(cr, 0, 0, 0);
+      ApplyFont(cr, font);
 
       double cx = at->xy_[0];
       double cy = at->xy_[1];
@@ -456,6 +453,14 @@ void AnnPdf::AnnotatePage(
     }
   }
   cairo_restore(cr);
+}
+
+void AnnPdf::ApplyFont(cairo_t *cr, const Font &font) {
+  cairo_set_font_face(cr, font.c_face_);
+  cairo_matrix_t font_matrix;
+  cairo_matrix_init(&font_matrix, font.size_, 0, 0, -font.size_, 0, 0);
+  cairo_set_font_matrix(cr, &font_matrix);
+  cairo_set_source_rgb(cr, 0, 0, 0);
 }
 
 namespace {
