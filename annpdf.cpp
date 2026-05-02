@@ -418,6 +418,7 @@ void AnnPdf::AnnotatePage(
     if (ab) {
       cairo_set_source_rgb(cr, 1.0, 1.0, 1.0); // white
       cairo_rectangle(cr, ab->xy_[0], ab->xy_[1], ab->width_, ab->height_);
+      cairo_fill(cr);
     }
     if (at) {
       std::unordered_map<std::string, Font>::iterator iter =
