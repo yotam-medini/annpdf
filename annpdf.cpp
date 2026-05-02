@@ -97,9 +97,9 @@ class AnnotationText : public Annotation {
   std::string font_name_;
   int font_size_;
   std::string str() const override {
-    return std::format("{}p={} {}{} {} @ ({}, {}) F={}:{} {}",
-      "{", page_, lang_, is_ltr_ ? '>' : '<', text_, xy_[0], xy_[1],
-      font_name_, font_size_,
+    return std::format("{}p={} {}{} @ ({}, {}) F={}:{} {} T={}",
+      "{", page_, lang_, is_ltr_ ? '>' : '<', xy_[0], xy_[1],
+      font_name_, font_size_, text_,
       "}");
   }
  private:
@@ -144,6 +144,10 @@ class AnnPdf {
   void LoadPdf();
   void LoadFonts();
   void LoadAnnotations();
+  void LoadAnnotationText(
+    AnnParseState &ps,
+    const std::string &line,
+    int line_number);
   void Annotate();
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   bool Ok() const { return rc_ == 0; }
@@ -251,7 +255,7 @@ void AnnPdf::LoadAnnotations() {
     int line_number = 0;
     AnnParseState ps;
     for (std::string line; Ok() && std::getline(f, line); ++line_number) {
-      if (debug_flags_ & 0x4) {
+      if (debug_flags_ & 0x10) {
         std::cout << std::format("[{:3d}] {}\n", line_number, line);
       }
       char c0 = line.empty() ? ' ' : line[0];
@@ -264,36 +268,50 @@ void AnnPdf::LoadAnnotations() {
                 ps.page_, ps.x_, ps.y_, ps.width_, ps.height_));
           }
         } else {
-          // page:x:y:font:size:lang:dir:text  # 7 colons max before text
-          const auto ld = line.data();
-          const auto ld_end = ld + line.size();
-          const size_t col_count = std::count(ld, ld_end, ':');
-          if (col_count == 0) {
-            std::cerr << std::format("No colons in [{}] {}\n",
-              line_number, line);
-            SetRc(EX_CONFIG);
-          } else {
-            size_t text_pos = 0;
-            if (col_count <= 7) {
-              text_pos = line.rfind(':') + 1;
-            } else {
-              for (size_t cc = 0; cc < 7; ++cc) {
-                auto col_pos = std::find(ld + text_pos, ld_end, ':');
-                text_pos += (col_pos - ld) + 1;
-              }
-            }
-            auto const pre_text = line.substr(0, text_pos);
-            auto const text = line.substr(text_pos);
-            rc_ = ps.ParseText(pre_text, line_number);
-            if (Ok()) {
-              annotations_.push_back(
-                std::make_unique<AnnotationText>(
-                  ps.page_, ps.lang_, ps.dir_ == "ltr", text, ps.xy(),
-                  ps.font_name_, ps.font_size_));
-            }
-          }
+          LoadAnnotationText(ps, line, line_number);
         }
       }
+    }
+  }
+  if (Ok() && (debug_flags_ & 0x4)) {
+    std::cerr << std::format("annotations[{}]", annotations_.size()) << "{\n";
+    for (size_t i = 0; i < annotations_.size(); ++i) {
+      std::cerr << std::format("  [{:4d}] {}\n", i, annotations_[i]->str());
+    }
+    std::cerr << "}\n";
+  }
+}
+
+void AnnPdf::LoadAnnotationText(
+    AnnParseState &ps,
+    const std::string &line,
+    int line_number) {
+  // page:x:y:font:size:lang:dir:text  # 7 colons max before text
+  const auto ld = line.data();
+  const auto ld_end = ld + line.size();
+  const size_t col_count = std::count(ld, ld_end, ':');
+  if (col_count == 0) {
+    std::cerr << std::format("No colons in [{}] {}\n",
+      line_number, line);
+    SetRc(EX_CONFIG);
+  } else {
+    size_t text_pos = 0;
+    if (col_count <= 7) {
+      text_pos = line.rfind(':') + 1;
+    } else {
+      for (size_t cc = 0; cc < 7; ++cc) {
+        auto col_pos = std::find(ld + text_pos, ld_end, ':');
+        text_pos += (col_pos - ld) + 1;
+      }
+    }
+    auto const pre_text = line.substr(0, text_pos);
+    auto const text = line.substr(text_pos);
+    rc_ = ps.ParseText(pre_text, line_number);
+    if (Ok()) {
+      annotations_.push_back(
+        std::make_unique<AnnotationText>(
+          ps.page_, ps.lang_, ps.dir_ == "ltr", text, ps.xy(),
+          ps.font_name_, ps.font_size_));
     }
   }
 }

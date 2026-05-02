@@ -7,10 +7,13 @@
 
 int AnnParseState::ParseBlank(const std::string &line, int line_number) {
   int rc_ = 0;
-  size_t i = blank.size();
+  size_t i = 0;
+  std::string the_blank;
   const int page_old = page_;
   bool unused =
-    (i < line.size()) && (line[i] == ':')
+    (i < line.size()) 
+    && sget(the_blank, line, i)
+    && (the_blank == blank)
     && (iget(page_, line, i)
     && iget(x_, line, i)
     && iget(y_, line, i)
@@ -37,7 +40,7 @@ int AnnParseState::ParseText(const std::string &line, int line_number) {
   const int page_old = page_;
   size_t i = 0;
   bool unused =
-    ((i < line.size()) && (line[i] == ':')
+    ((i < line.size())
     && iget(page_, line, i)
     && iget(x_, line, i)
     && iget(y_, line, i)
@@ -83,7 +86,7 @@ bool AnnParseState::iget(int &v, const std::string &line, size_t &i) {
         '"', line.substr(i, j - i), '"');
       rc_ = EX_CONFIG;
     }
-    i = j;
+    i = j + 1;
   }
   return got;
 }
@@ -96,7 +99,8 @@ bool AnnParseState::sget(std::string &v, const std::string &line, size_t &i) {
   }
   if (i < j) {
     v = line.substr(i, j - i);
-    i = j;
+    i = j + 1;
+    got = true;
   }
   return got;
 }
