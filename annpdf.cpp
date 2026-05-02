@@ -59,6 +59,8 @@ std::cout << std::format("Resize: {} -> {}\n", size_, size);
         hb_font_destroy(hb_font_);
       }
       hb_font_ = hb_ft_font_create(ft_face_, nullptr);
+      hb_ft_font_set_funcs(hb_font_);
+
       if (c_face_) {
         cairo_font_face_destroy(c_face_);
       }
