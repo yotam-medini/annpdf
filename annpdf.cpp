@@ -306,7 +306,15 @@ void AnnPdf::LoadAnnotationText(
     }
     auto const pre_text = line.substr(0, text_pos);
     auto const text = line.substr(text_pos);
+    auto lang_old = ps.lang_;
     rc_ = ps.ParseText(pre_text, line_number);
+    if (Ok() && (lang_old != ps.lang_)) {
+      auto const hb_lang = hb_language_from_string(ps.lang_.c_str(), -1);
+      if (hb_lang == HB_LANGUAGE_INVALID) {
+        std::cerr << std::format("Unsupported lang: {}\n", ps.lang_);
+        SetRc(EX_CONFIG);
+      }
+    }
     if (Ok()) {
       annotations_.push_back(
         std::make_unique<AnnotationText>(

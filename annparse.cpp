@@ -69,7 +69,7 @@ int AnnParseState::ParseText(const std::string &line, int line_number) {
 }
 
 bool AnnParseState::iget(int &v, const std::string &line, size_t &i) {
-  bool got = false;
+  bool got = (i < line.size());
   size_t j = i;
   while ((j < line.size()) && (line[j] != ':')) {
     ++j;
@@ -85,23 +85,23 @@ bool AnnParseState::iget(int &v, const std::string &line, size_t &i) {
       std::cerr << std::format("iget failed {}{}{}\n",
         '"', line.substr(i, j - i), '"');
       rc_ = EX_CONFIG;
+      got = false;
     }
-    i = j + 1;
   }
+  i = j + 1;
   return got;
 }
 
 bool AnnParseState::sget(std::string &v, const std::string &line, size_t &i) {
-  bool got = false;
+  bool got = (i < line.size());
   size_t j = i;
   while ((j < line.size()) && (line[j] != ':')) {
     ++j;
   }
   if (i < j) {
     v = line.substr(i, j - i);
-    i = j + 1;
-    got = true;
   }
+  i = j + 1;
   return got;
 }
 
