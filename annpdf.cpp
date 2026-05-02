@@ -52,15 +52,13 @@ class Font {
   }
   void Resize(int size) {
     if (size_ != size) {
-std::cout << std::format("Resize: {} -> {}\n", size_, size);
       FT_Set_Char_Size(ft_face_, 0, size * 64, 72, 72);
-      // hb_ft_font_changed(hb_font_);
+      // hb_ft_font_changed(hb_font_); not sufficient
       if (hb_font_) {
         hb_font_destroy(hb_font_);
       }
       hb_font_ = hb_ft_font_create(ft_face_, nullptr);
       hb_ft_font_set_funcs(hb_font_);
-
       if (c_face_) {
         cairo_font_face_destroy(c_face_);
       }
@@ -455,7 +453,6 @@ void AnnPdf::HarfBuzzShaping(
     hb_buffer_t* hb_buffer,
     const AnnotationText &at,
     const Font &font) {
-std::cerr << std::format("{} text={}\n", __func__, at.text_);
   hb_buffer_add_utf8(hb_buffer, at.text_.c_str(), -1, 0, -1);
   hb_direction_t hb_dir = at.is_ltr_ ? HB_DIRECTION_LTR : HB_DIRECTION_RTL;
   hb_buffer_set_direction(hb_buffer, hb_dir);
@@ -488,12 +485,9 @@ void AnnPdf::ShowGlyphs(
   double cy = at.xy_[1];
   std::vector<cairo_glyph_t> cairo_glyphs(glyph_count);
 
-std::cerr << std::format("glyph_count={}\n", glyph_count);
   for (unsigned int g = 0; g < glyph_count; ++g) {
       cairo_glyphs[g].index = info[g].codepoint;
       cairo_glyphs[g].x = cx + (pos[g].x_offset / 64.0);
-std::cerr << std::format("g={} x_offset={} x_advance={} x={}\n",
- g, pos[g].x_offset, pos[g].x_advance, cairo_glyphs[g].x);
       cairo_glyphs[g].y = cy - (pos[g].y_offset / 64.0);
       cx += pos[g].x_advance / 64.0;
       cy += pos[g].y_advance / 64.0;
