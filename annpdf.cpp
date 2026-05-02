@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -149,6 +148,8 @@ class AnnPdf {
     const std::string &line,
     int line_number);
   void Annotate();
+  void AnnotatePage(
+    PopplerPage* page, cairo_t* cr, const size_t ai_begin, const size_t ai_end);
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
   bool Ok() const { return rc_ == 0; }
   int rc_{0};
@@ -165,7 +166,7 @@ class AnnPdf {
 };
 
 AnnPdf::~AnnPdf() {
-  name2font_.clear(); // before freeing ft_library_  
+  name2font_.clear(); // before freeing ft_library_
   if (ft_library_initded_) {
     FT_Done_FreeType(ft_library_);
   }
@@ -307,11 +308,18 @@ void AnnPdf::LoadAnnotationText(
     auto const pre_text = line.substr(0, text_pos);
     auto const text = line.substr(text_pos);
     auto lang_old = ps.lang_;
+    auto font_old = ps.font_name_;
     rc_ = ps.ParseText(pre_text, line_number);
     if (Ok() && (lang_old != ps.lang_)) {
       auto const hb_lang = hb_language_from_string(ps.lang_.c_str(), -1);
       if (hb_lang == HB_LANGUAGE_INVALID) {
         std::cerr << std::format("Unsupported lang: {}\n", ps.lang_);
+        SetRc(EX_CONFIG);
+      }
+    }
+    if (Ok() && (font_old != ps.font_name_)) {
+      if (name2font_.find(ps.font_name_) == name2font_.end()) {
+        std::cerr << std::format("Not found font: {}\n", ps.font_name_);
         SetRc(EX_CONFIG);
       }
     }
@@ -325,6 +333,128 @@ void AnnPdf::LoadAnnotationText(
 }
 
 void AnnPdf::Annotate() {
+  const int num_pages = poppler_document_get_n_pages(doc_);
+  const size_t num_anns = annotations_.size();
+  if (debug_flags_ & 0x1) {
+    std::cout << std::format("Annotate: num_pages={}\n", num_pages);
+  }
+  cairo_surface_t* surface =
+    cairo_pdf_surface_create(output_pdf_path_.c_str(), 1, 1);
+  cairo_t* cr = nullptr;
+  if (!surface) {
+    std::cerr << std::format("Failed cairo_pdf_surface_create({})\n",
+      output_pdf_path_);
+    SetRc(EX_UNAVAILABLE);
+  } else {
+    auto c_status = cairo_surface_status(surface);
+    if (debug_flags_ & 0x1) {
+      std::cout << std::format("cairo_surface_status: {}\n",
+        static_cast<int>(c_status));
+    }
+    cr = cairo_create(surface);
+  }
+  size_t ann_idx = 0;
+  for (int page_num = 0, p1 = 1; Ok() && (page_num < num_pages);
+      page_num = p1++) {
+
+    PopplerPage* page = poppler_document_get_page(doc_, page_num);
+    double w, h;
+    poppler_page_get_size(page, &w, &h);
+
+    cairo_pdf_surface_set_size(surface, w, h);
+    poppler_page_render(page, cr);
+
+    if (debug_flags_ & 0x1) {
+      std::cout << std::format("Annotating/Copying page: {} (+1={})\n",
+        page_num, p1);
+    }
+    while ((ann_idx < num_anns) && (annotations_[ann_idx]->page_ < p1)) {
+       ++ann_idx;
+    }
+    auto const ann_idx_begin = ann_idx;
+    while ((ann_idx < num_anns) && (annotations_[ann_idx]->page_ == p1)) {
+      ++ann_idx;
+    }
+    if (ann_idx_begin < ann_idx) {
+      AnnotatePage(page, cr, ann_idx_begin, ann_idx);
+    }
+
+    cairo_show_page(cr); // saving to file
+    g_object_unref(page);
+  }
+  if (surface) {
+    cairo_surface_destroy(surface);
+  }
+}
+
+void AnnPdf::AnnotatePage(
+    PopplerPage* page,
+    cairo_t* cr,
+    const size_t ai_begin,
+    const size_t ai_end) {
+  double w, h;
+  poppler_page_get_size(page, &w, &h);
+  cairo_save(cr);
+
+  // Cartesian Flip
+  cairo_translate(cr, 0, h);
+  cairo_scale(cr, 1.0, -1.0);
+
+  for (size_t ai = ai_begin; Ok() && (ai < ai_end); ++ai) {
+    const Annotation *a = annotations_[ai].get();
+    const AnnotationBlank *ab = dynamic_cast<const AnnotationBlank*>(a);
+    const AnnotationText *at = dynamic_cast<const AnnotationText*>(a);
+    if (ab) {
+      cairo_set_source_rgb(cr, 1.0, 1.0, 1.0); // white
+      cairo_rectangle(cr, ab->xy_[0], ab->xy_[1], ab->width_, ab->height_);
+    }
+    if (at) {
+      std::unordered_map<std::string, Font>::iterator iter =
+        name2font_.find(at->font_name_);
+      if (iter == name2font_.end()) {
+        std::cerr << std::format("Fatal not found font={}\n", at->font_name_);
+        exit(13);
+      }
+      Font &font = iter->second;
+      font.Resize(at->font_size_);
+
+      // HarfBuzz Shaping
+      hb_buffer_t* hb_buffer = hb_buffer_create();
+      hb_buffer_add_utf8(hb_buffer, at->text_.c_str(), -1, 0, -1);
+      hb_direction_t hb_dir = at->is_ltr_ ? HB_DIRECTION_LTR : HB_DIRECTION_RTL;
+      hb_buffer_set_direction(hb_buffer, hb_dir);
+      hb_buffer_set_script(hb_buffer, (hb_dir == HB_DIRECTION_RTL) ? HB_SCRIPT_HEBREW : HB_SCRIPT_LATIN);
+      hb_buffer_set_language(hb_buffer, hb_language_from_string(at->lang_.c_str(), -1));
+      hb_shape(font.hb_font_, hb_buffer, NULL, 0);
+
+      unsigned int glyph_count;
+      hb_glyph_info_t* info = hb_buffer_get_glyph_infos(hb_buffer, &glyph_count);
+      hb_glyph_position_t* pos = hb_buffer_get_glyph_positions(hb_buffer, &glyph_count);
+
+      // Apply Font
+      cairo_set_font_face(cr, font.c_face_);
+      cairo_matrix_t font_matrix;
+      cairo_matrix_init(&font_matrix, font.size_, 0, 0, -font.size_, 0, 0);
+      cairo_set_font_matrix(cr, &font_matrix);
+      cairo_set_source_rgb(cr, 0, 0, 0);
+
+      double cx = at->xy_[0];
+      double cy = at->xy_[1];
+      std::vector<cairo_glyph_t> cairo_glyphs(glyph_count);
+
+      for (unsigned int g = 0; g < glyph_count; ++g) {
+          cairo_glyphs[g].index = info[g].codepoint;
+          cairo_glyphs[g].x = cx + (pos[g].x_offset / 64.0);
+          cairo_glyphs[g].y = cy - (pos[g].y_offset / 64.0);
+          cx += pos[g].x_advance / 64.0;
+          cy += pos[g].y_advance / 64.0;
+      }
+
+      cairo_show_glyphs(cr, cairo_glyphs.data(), glyph_count);
+      hb_buffer_destroy(hb_buffer);
+    }
+  }
+  cairo_restore(cr);
 }
 
 namespace {

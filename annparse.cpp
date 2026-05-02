@@ -1,4 +1,5 @@
 #include "annparse.hpp"
+#include <charconv>
 #include <format>
 #include <iostream>
 #include <string>
@@ -11,7 +12,7 @@ int AnnParseState::ParseBlank(const std::string &line, int line_number) {
   std::string the_blank;
   const int page_old = page_;
   bool unused =
-    (i < line.size()) 
+    (i < line.size())
     && sget(the_blank, line, i)
     && (the_blank == blank)
     && (iget(page_, line, i)
