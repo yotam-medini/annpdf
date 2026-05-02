@@ -382,6 +382,7 @@ void AnnPdf::Annotate() {
     cairo_show_page(cr); // saving to file
     g_object_unref(page);
   }
+  cairo_destroy(cr);
   if (surface) {
     cairo_surface_destroy(surface);
   }
