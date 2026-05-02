@@ -26,7 +26,10 @@ find_package(Freetype REQUIRED)
 pkg_check_modules(POPPLER REQUIRED poppler-glib)
 
 # Define the executable
-add_executable(annpdf annpdf.cpp)
+add_executable(annpdf
+    annpdf.cpp
+    annparse.cpp
+)
 
 # 6. Include Directories
 target_include_directories(annpdf PRIVATE

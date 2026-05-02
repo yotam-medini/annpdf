@@ -1,5 +1,6 @@
 #include <cstdint>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <filesystem>
@@ -10,7 +11,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <sysexits.h>
 
@@ -33,8 +33,36 @@
 #include <poppler.h>
 #include <glib.h>
 
+#include "annparse.hpp"
+
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
+
+class Font {
+ public:
+  ~Font() {
+    if (c_face_) {
+      cairo_font_face_destroy(c_face_);
+    }
+    if (hb_font_) {
+      hb_font_destroy(hb_font_);
+    }
+    if (ft_face_) {
+      FT_Done_Face(ft_face_);
+    }
+  }
+  void Resize(int size) {
+    if (size_ != size) {
+      FT_Set_Char_Size(ft_face_, 0, size * 64, 72, 72);
+      hb_ft_font_changed(hb_font_);
+      size_ = size;
+    }
+  }
+  FT_Face ft_face_{nullptr};
+  hb_font_t *hb_font_{nullptr};
+  cairo_font_face_t *c_face_{nullptr};
+  int size_{12}; // default
+};
 
 class Annotation {
  public:
@@ -51,15 +79,14 @@ class AnnotationText : public Annotation {
     const std::string &lang,
     bool is_ltr,
     std::string text,
-    int x,
-    int y,
+    std::array<int, 2> xy,
     const std::string &font_name,
     int font_size) :
     Annotation(page),
     lang_{lang},
     is_ltr_{is_ltr},
     text_{text},
-    xy_{x, y},
+    xy_{xy},
     font_name_{font_name},
     font_size_{font_size} {
   }
@@ -96,32 +123,6 @@ class AnnotationBlank : public Annotation {
   int height_{0};
 };
 
-class Font {
- public:
-  ~Font() {
-    if (c_face_) {
-      cairo_font_face_destroy(c_face_);
-    }
-    if (hb_font_) {
-      hb_font_destroy(hb_font_);
-    }
-    if (ft_face_) {
-      FT_Done_Face(ft_face_);
-    }
-  }
-  void Resize(int size) {
-    if (size_ != size) {
-      FT_Set_Char_Size(ft_face_, 0, size * 64, 72, 72);
-      hb_ft_font_changed(hb_font_);
-      size_ = size;
-    }
-  }
-  FT_Face ft_face_{nullptr};
-  hb_font_t *hb_font_{nullptr};
-  cairo_font_face_t *c_face_{nullptr};
-  int size_{12}; // default
-};
-
 class AnnPdf {
  public:
   using vstrings_t = std::vector<std::string>;
@@ -145,9 +146,8 @@ class AnnPdf {
   void LoadAnnotations();
   void Annotate();
   void SetRc(int code) { if (rc_ == 0) { rc_ = code; } }
-  bool iget(int &v, const std::string &line, size_t &i);
-  int rc_{0};
   bool Ok() const { return rc_ == 0; }
+  int rc_{0};
   const std::string &input_pdf_path_;
   const std::string &output_pdf_path_;
   const std::string &annotation_path_;
@@ -249,43 +249,49 @@ void AnnPdf::LoadAnnotations() {
     SetRc(EX_NOINPUT);
   } else {
     int line_number = 0;
-    int page = -1;
-    int x = -1;
-    int y = -1;
-    int width = -1;
-    int height = -1;
-    std::string font_name;
-    std::string lang = "en";
-    bool ltr = true;
+    AnnParseState ps;
     for (std::string line; Ok() && std::getline(f, line); ++line_number) {
       if (debug_flags_ & 0x4) {
         std::cout << std::format("[{:3d}] {}\n", line_number, line);
       }
-      char c0 = line.empty() ? ' ' :  ' ';
+      char c0 = line.empty() ? ' ' : line[0];
       if ((c0 != ' ') && (c0 != '#')) {
-        constexpr std::string_view blank{"blank"};
         if (line.starts_with(blank)) {
-          size_t i = blank.size();
-          bool unused =
-            (i < line.size()) && (line[i] == ':')
-            && (iget(page, line, i)
-            && iget(x, line, i)
-            && iget(y, line, i)
-            && iget(width, line, i)
-            && iget(height, line, i));
-          (void)unused;
-          if (std::unordered_set<int>{page, x, y, width, height}.contains(-1)) {
-            std::cerr <<
-              std::format("page={}, x={}, y={}, width={}, height={}\n",
-                page, x, y, width, height) <<
-              std::format("Missing values in [{:3d}] {}\n", line_number, line);
-            SetRc(EX_CONFIG);
-          } else {
+          rc_ = ps.ParseBlank(line, line_number);
+          if (Ok()) {
             annotations_.push_back(
-              std::make_unique<AnnotationBlank>(page, x, y, width, height));
+              std::make_unique<AnnotationBlank>(
+                ps.page_, ps.x_, ps.y_, ps.width_, ps.height_));
           }
         } else {
-          SetRc(13);
+          // page:x:y:font:size:lang:dir:text  # 7 colons max before text
+          const auto ld = line.data();
+          const auto ld_end = ld + line.size();
+          const size_t col_count = std::count(ld, ld_end, ':');
+          if (col_count == 0) {
+            std::cerr << std::format("No colons in [{}] {}\n",
+              line_number, line);
+            SetRc(EX_CONFIG);
+          } else {
+            size_t text_pos = 0;
+            if (col_count <= 7) {
+              text_pos = line.rfind(':') + 1;
+            } else {
+              for (size_t cc = 0; cc < 7; ++cc) {
+                auto col_pos = std::find(ld + text_pos, ld_end, ':');
+                text_pos += (col_pos - ld) + 1;
+              }
+            }
+            auto const pre_text = line.substr(0, text_pos);
+            auto const text = line.substr(text_pos);
+            rc_ = ps.ParseText(pre_text, line_number);
+            if (Ok()) {
+              annotations_.push_back(
+                std::make_unique<AnnotationText>(
+                  ps.page_, ps.lang_, ps.dir_ == "ltr", text, ps.xy(),
+                  ps.font_name_, ps.font_size_));
+            }
+          }
         }
       }
     }
@@ -293,29 +299,6 @@ void AnnPdf::LoadAnnotations() {
 }
 
 void AnnPdf::Annotate() {
-}
-
-bool AnnPdf::iget(int &v, const std::string &line, size_t &i) {
-  bool got = false;
-  size_t j = i;
-  while ((j < line.size()) && (line[j] != ':')) {
-    ++j;
-  }
-  if (i < j) {
-    int new_val;
-    auto data = line.data();
-    auto [ptr, ec] = std::from_chars(data + i, data + j, new_val);
-    if ((ec == std::errc()) && (ptr == data + j)) {
-      v = new_val;
-      got = true;
-    } else {
-      std::cerr << std::format("iget failed {}{}{}\n",
-        '"', line.substr(i, j - i), '"');
-      SetRc(EX_CONFIG);
-    }
-    i = j;
-  }
-  return got;
 }
 
 namespace {
