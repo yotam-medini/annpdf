@@ -13,7 +13,7 @@ class AnnParseState {
   int page_{-1};
   int x_{-1};
   int y_{-1};
-  int width_{-1};
+  int xright_{-1};
   int height_{-1};
   std::string font_name_;
   int font_size_{-1};

@@ -285,7 +285,7 @@ void AnnPdf::LoadAnnotations() {
           if (Ok()) {
             annotations_.push_back(
               std::make_unique<AnnotationBlank>(
-                ps.page_, ps.x_, ps.y_, ps.width_, ps.height_));
+                ps.page_, ps.x_, ps.y_, ps.xright_, ps.height_));
           }
         } else {
           LoadAnnotationText(ps, line, line_number);
@@ -319,9 +319,11 @@ void AnnPdf::LoadAnnotationText(
     if (col_count <= 7) {
       text_pos = line.rfind(':') + 1;
     } else {
-      for (size_t cc = 0; cc < 7; ++cc) {
-        auto col_pos = std::find(ld + text_pos, ld_end, ':');
-        text_pos += (col_pos - ld) + 1;
+      for (int col_count = 0; col_count < 7; ++col_count) {
+        while (ld[text_pos] != ':') {
+          ++text_pos;
+        }
+        ++text_pos;
       }
     }
     auto const pre_text = line.substr(0, text_pos);
@@ -421,6 +423,7 @@ void AnnPdf::AnnotatePage(
   cairo_scale(cr, 1.0, -1.0);
 
   for (size_t ai = ai_begin; Ok() && (ai < ai_end); ++ai) {
+    cairo_save(cr);
     const Annotation *a = annotations_[ai].get();
     const AnnotationBlank *ab = dynamic_cast<const AnnotationBlank*>(a);
     const AnnotationText *at = dynamic_cast<const AnnotationText*>(a);
@@ -445,6 +448,7 @@ void AnnPdf::AnnotatePage(
       ShowGlyphs(cr, hb_buffer, *at);
       hb_buffer_destroy(hb_buffer);
     }
+    cairo_restore(cr);
   }
   cairo_restore(cr);
 }

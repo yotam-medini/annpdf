@@ -18,14 +18,18 @@ int AnnParseState::ParseBlank(const std::string &line, int line_number) {
     && (iget(page_, line, i)
     && iget(x_, line, i)
     && iget(y_, line, i)
-    && iget(width_, line, i)
+    && iget(xright_, line, i)
     && iget(height_, line, i));
   (void)unused;
   if ((rc_ == 0) &&
-      std::unordered_set<int>{page_, x_, y_, width_, height_}.contains(-1)) {
+      std::unordered_set<int>{page_, x_, y_, xright_, height_}.contains(-1)) {
     std::cerr <<
-      std::format("page={}, x={}, y={}, width={}, height={}\n",
-        page_, x_, y_, width_, height_);
+      std::format("page={}, x={}, y={}, xright_={}, height={}\n",
+        page_, x_, y_, xright_, height_);
+    rc_ = EX_CONFIG;
+  }
+  if ((rc_ == 0) && (xright_ < x_)) {
+    std::cerr << std::format("xright= {} < {} =x\n", xright_, x_);
     rc_ = EX_CONFIG;
   }
   if ((rc_ == 0) && (page_old > page_)) {
